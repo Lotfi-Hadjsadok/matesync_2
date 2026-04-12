@@ -14,8 +14,11 @@ import {
     getRedemptionCounts,
     getRedemptionHistory,
     getRewards,
+    mergeRewardOrderAfterFilteredReorder,
     redeemReward,
     rejectRedemption,
+    updateRewardPositions,
+    type Reward,
     type RewardListFilter,
 } from '@/utils/rewards'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -25,6 +28,7 @@ import {
     Clock,
     FileText,
     Gift,
+    GripVertical,
     Heart,
     History,
     PartyPopper,
@@ -34,7 +38,7 @@ import {
     Trash2,
     XCircle,
 } from 'lucide-react-native'
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
     ActivityIndicator,
     Alert,
@@ -48,6 +52,7 @@ import {
     TextInput,
     View,
 } from 'react-native'
+import { NestableDraggableFlatList, NestableScrollContainer } from 'react-native-draggable-flatlist'
 
 const REWARD_COST_PRESETS = ['25', '50', '100', '150'] as const
 
@@ -159,7 +164,8 @@ export default function RewardsScreen() {
     mutationFn: async () => {
       const c = Math.max(1, parseInt(cost, 10) || 1)
       const max = limitEnabled ? Math.max(1, parseInt(limitCount, 10) || 1) : null
-      return createReward(coupleId, title.trim(), description.trim() || null, c, rewards.length, max)
+      const nextPos = rewards.reduce((m, r) => Math.max(m, r.position), -1) + 1
+      return createReward(coupleId, title.trim(), description.trim() || null, c, nextPos, max)
     },
     onSuccess: () => {
       invalidateAll()
@@ -228,9 +234,153 @@ export default function RewardsScreen() {
     onError: (err: Error) => Alert.alert('Error', err.message),
   })
 
+  const reorderRewardsMutation = useMutation({
+    mutationFn: (orderedIds: string[]) => updateRewardPositions(coupleId, orderedIds),
+    onSuccess: invalidateAll,
+    onError: (err: Error) => Alert.alert('Order not saved', err.message),
+  })
+
+  const renderRewardDraggableRow = useCallback(
+    ({
+      item: r,
+      drag,
+      isActive,
+    }: {
+      item: Reward
+      drag: () => void
+      isActive: boolean
+    }) => {
+      const iCreated = r.created_by === myId
+      const fromLabel = !r.created_by
+        ? 'From both of you'
+        : iCreated
+          ? 'Your treat for them'
+          : `From ${partnerName}`
+      const approvedCount = redemptionCounts[r.id] ?? 0
+      const isMaxed = r.max_redemptions !== null && approvedCount >= r.max_redemptions
+      const hasPending = myPendingByReward.has(r.id)
+      const canRedeem = !iCreated && !isMaxed && !hasPending && myBalance >= r.cost_points
+      const showRedeem = !iCreated
+      const canDelete = !r.created_by || r.created_by === myId
+
+      const card = (
+        <View
+          className="mb-3.5 rounded-[22px] border-2 border-mate-border bg-mate-surface p-4"
+          style={{ opacity: isActive ? 0.92 : 1 }}
+        >
+          <View className="flex-row items-start gap-2">
+            <Pressable onLongPress={drag} delayLongPress={180} className="py-1 pr-0.5">
+              <GripVertical size={20} color={playful.textMuted} />
+            </Pressable>
+            <View className="min-w-0 flex-1 flex-row items-start gap-3">
+              <View className="min-w-0 flex-1">
+                <Text className="font-mate-semibold text-[17px] text-mate-text">{r.title}</Text>
+                <Text className="mt-1 font-mate-semibold text-xs text-mate-accent">{fromLabel}</Text>
+                {r.description ? (
+                  <Text className="mt-1 font-mate text-sm text-mate-text-muted">{r.description}</Text>
+                ) : null}
+
+                {r.max_redemptions !== null && (
+                  <View className="mt-2 flex-row items-center gap-1">
+                    <Repeat2 size={12} color={isMaxed ? playful.textMuted : playful.accent} />
+                    <Text
+                      className={`font-mate-medium text-xs ${isMaxed ? 'text-mate-text-muted' : 'text-mate-accent'}`}
+                    >
+                      {isMaxed
+                        ? `Claimed ${approvedCount}/${r.max_redemptions} — fully redeemed`
+                        : `${approvedCount}/${r.max_redemptions} claimed`}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <View className="flex-row items-center gap-1 rounded-full bg-mate-muted px-3 py-2">
+                <Sparkles size={14} color={playful.accent} />
+                <Text className="font-mate-bold text-[15px] text-mate-accent">{r.cost_points}</Text>
+              </View>
+            </View>
+          </View>
+
+          <View className="mt-3.5 flex-row items-center gap-2.5">
+            {showRedeem ? (
+              hasPending ? (
+                <View className="flex-1 flex-row items-center justify-between rounded-[14px] border border-amber-300 bg-amber-50 px-3.5 py-3">
+                  <View className="flex-row items-center gap-2">
+                    <Clock size={14} color="#d97706" />
+                    <Text className="font-mate-medium text-sm text-amber-700">Awaiting approval</Text>
+                  </View>
+                  <Pressable
+                    onPress={() => {
+                      const pendingId = myPendingByReward.get(r.id)!
+                      Alert.alert('Cancel request?', 'Take back your treat request.', [
+                        { text: 'Keep it', style: 'cancel' },
+                        { text: 'Cancel', style: 'destructive', onPress: () => cancelMutation.mutate(pendingId) },
+                      ])
+                    }}
+                  >
+                    <XCircle size={16} color="#d97706" />
+                  </Pressable>
+                </View>
+              ) : isMaxed ? (
+                <View className="flex-1 justify-center rounded-[14px] bg-mate-muted px-3.5 py-3">
+                  <Text className="font-mate-medium text-sm text-mate-text-muted">Fully redeemed</Text>
+                </View>
+              ) : (
+                <Pressable
+                  className={`flex-1 items-center rounded-[14px] bg-mate-success py-3 ${!canRedeem ? 'opacity-35' : 'active:opacity-90'}`}
+                  disabled={!canRedeem || redeemMutation.isPending}
+                  onPress={() => redeemMutation.mutate(r.id)}
+                >
+                  <Text className="font-mate-semibold text-[15px] text-white">Claim it</Text>
+                </Pressable>
+              )
+            ) : (
+              <View className="flex-1 justify-center rounded-[14px] bg-mate-muted px-3.5 py-3">
+                <Text className="font-mate-medium text-sm text-mate-text-muted">
+                  {partnerId ? `${partnerName} claims this one` : 'Your partner claims this one'}
+                </Text>
+              </View>
+            )}
+            {canDelete ? (
+              <Pressable
+                className="rounded-[14px] bg-mate-muted p-3 active:opacity-80"
+                onPress={() =>
+                  Alert.alert('Take this off the shelf?', r.title, [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Remove',
+                      style: 'destructive',
+                      onPress: () => deleteMutation.mutate(r.id),
+                    },
+                  ])
+                }
+              >
+                <Trash2 size={18} color={playful.textMuted} />
+              </Pressable>
+            ) : (
+              <View className="w-12" />
+            )}
+          </View>
+        </View>
+      )
+
+      return card
+    },
+    [
+      cancelMutation,
+      deleteMutation,
+      myBalance,
+      myId,
+      myPendingByReward,
+      partnerId,
+      partnerName,
+      redeemMutation,
+      redemptionCounts,
+    ],
+  )
+
   return (
     <SafeAreaView className="flex-1 bg-mate-bg" edges={['top']}>
-      <ScrollView
+      <NestableScrollContainer
         className="flex-1"
         contentContainerClassName="px-5 pb-12 pt-1"
         showsVerticalScrollIndicator={false}
@@ -397,117 +547,24 @@ export default function RewardsScreen() {
             </Text>
           </View>
         ) : (
-          <View className="gap-3.5">
-            {filteredRewards.map((r) => {
-              const iCreated = r.created_by === myId
-              const fromLabel = !r.created_by
-                ? 'From both of you'
-                : iCreated
-                  ? 'Your treat for them'
-                  : `From ${partnerName}`
-              const approvedCount = redemptionCounts[r.id] ?? 0
-              const isMaxed = r.max_redemptions !== null && approvedCount >= r.max_redemptions
-              const hasPending = myPendingByReward.has(r.id)
-              const canRedeem = !iCreated && !isMaxed && !hasPending && myBalance >= r.cost_points
-              const showRedeem = !iCreated
-              const canDelete = !r.created_by || r.created_by === myId
-
-              return (
-                <View key={r.id} className="rounded-[22px] border-2 border-mate-border bg-mate-surface p-4">
-                  <View className="flex-row items-start gap-3">
-                    <View className="min-w-0 flex-1">
-                      <Text className="font-mate-semibold text-[17px] text-mate-text">{r.title}</Text>
-                      <Text className="mt-1 font-mate-semibold text-xs text-mate-accent">{fromLabel}</Text>
-                      {r.description ? (
-                        <Text className="mt-1 font-mate text-sm text-mate-text-muted">{r.description}</Text>
-                      ) : null}
-
-                      {/* Redemption limit badge */}
-                      {r.max_redemptions !== null && (
-                        <View className="mt-2 flex-row items-center gap-1">
-                          <Repeat2 size={12} color={isMaxed ? playful.textMuted : playful.accent} />
-                          <Text
-                            className={`font-mate-medium text-xs ${isMaxed ? 'text-mate-text-muted' : 'text-mate-accent'}`}
-                          >
-                            {isMaxed
-                              ? `Claimed ${approvedCount}/${r.max_redemptions} — fully redeemed`
-                              : `${approvedCount}/${r.max_redemptions} claimed`}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                    <View className="flex-row items-center gap-1 rounded-full bg-mate-muted px-3 py-2">
-                      <Sparkles size={14} color={playful.accent} />
-                      <Text className="font-mate-bold text-[15px] text-mate-accent">{r.cost_points}</Text>
-                    </View>
-                  </View>
-
-                  <View className="mt-3.5 flex-row items-center gap-2.5">
-                    {showRedeem ? (
-                      hasPending ? (
-                        <View className="flex-1 flex-row items-center justify-between rounded-[14px] bg-amber-50 border border-amber-300 px-3.5 py-3">
-                          <View className="flex-row items-center gap-2">
-                            <Clock size={14} color="#d97706" />
-                            <Text className="font-mate-medium text-sm text-amber-700">Awaiting approval</Text>
-                          </View>
-                          <Pressable
-                            onPress={() => {
-                              const pendingId = myPendingByReward.get(r.id)!
-                              Alert.alert('Cancel request?', 'Take back your treat request.', [
-                                { text: 'Keep it', style: 'cancel' },
-                                { text: 'Cancel', style: 'destructive', onPress: () => cancelMutation.mutate(pendingId) },
-                              ])
-                            }}
-                          >
-                            <XCircle size={16} color="#d97706" />
-                          </Pressable>
-                        </View>
-                      ) : isMaxed ? (
-                        <View className="flex-1 justify-center rounded-[14px] bg-mate-muted px-3.5 py-3">
-                          <Text className="font-mate-medium text-sm text-mate-text-muted">Fully redeemed</Text>
-                        </View>
-                      ) : (
-                        <Pressable
-                          className={`flex-1 items-center rounded-[14px] bg-mate-success py-3 ${!canRedeem ? 'opacity-35' : 'active:opacity-90'}`}
-                          disabled={!canRedeem || redeemMutation.isPending}
-                          onPress={() => redeemMutation.mutate(r.id)}
-                        >
-                          <Text className="font-mate-semibold text-[15px] text-white">Claim it</Text>
-                        </Pressable>
-                      )
-                    ) : (
-                      <View className="flex-1 justify-center rounded-[14px] bg-mate-muted px-3.5 py-3">
-                        <Text className="font-mate-medium text-sm text-mate-text-muted">
-                          {partnerId ? `${partnerName} claims this one` : 'Your partner claims this one'}
-                        </Text>
-                      </View>
-                    )}
-                    {canDelete ? (
-                      <Pressable
-                        className="rounded-[14px] bg-mate-muted p-3 active:opacity-80"
-                        onPress={() =>
-                          Alert.alert('Take this off the shelf?', r.title, [
-                            { text: 'Cancel', style: 'cancel' },
-                            {
-                              text: 'Remove',
-                              style: 'destructive',
-                              onPress: () => deleteMutation.mutate(r.id),
-                            },
-                          ])
-                        }
-                      >
-                        <Trash2 size={18} color={playful.textMuted} />
-                      </Pressable>
-                    ) : (
-                      <View className="w-12" />
-                    )}
-                  </View>
-                </View>
+          <NestableDraggableFlatList
+            key={rewardFilter}
+            data={filteredRewards}
+            keyExtractor={(r) => r.id}
+            renderItem={renderRewardDraggableRow}
+            onDragEnd={({ data }) => {
+              const merged = mergeRewardOrderAfterFilteredReorder(
+                rewards,
+                data.map((x) => x.id),
               )
-            })}
-          </View>
+              reorderRewardsMutation.mutate(merged)
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+            }}
+            scrollEnabled={false}
+            contentContainerStyle={{ paddingBottom: 4 }}
+          />
         )}
-      </ScrollView>
+      </NestableScrollContainer>
 
       {/* ── Create reward modal ── */}
       <Modal visible={createOpen} transparent animationType="slide" onRequestClose={() => setCreateOpen(false)}>

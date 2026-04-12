@@ -10,6 +10,7 @@ import {
 } from '@expo-google-fonts/fredoka'
 import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { initializeSessionStore } from '@/stores/sessionStore'
+import { configureNotificationPresentation } from '@/utils/pushNotifications'
 import { Stack } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { useEffect, useState } from 'react'
@@ -33,6 +34,10 @@ export default function RootLayout() {
   useEffect(() => {
     if (fontsLoaded) SplashScreen.hideAsync().catch(() => {})
   }, [fontsLoaded])
+
+  useEffect(() => {
+    configureNotificationPresentation()
+  }, [])
 
   useEffect(() => {
     initializeSessionStore().catch(() => {})

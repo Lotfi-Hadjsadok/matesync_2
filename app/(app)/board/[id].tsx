@@ -3,7 +3,7 @@ import { REFETCH_BOARD_MS } from '@/constants/reactQuery'
 import { playful } from '@/constants/theme'
 import { useProfile } from '@/hooks/useProfile'
 import { useSessionStore } from '@/stores/sessionStore'
-import type { Subtask, Task, TaskListFilter } from '@/utils/board'
+import type { Task, TaskListFilter } from '@/utils/board'
 import {
   completeTask,
   createSubtask,
@@ -12,8 +12,10 @@ import {
   deleteSubtask,
   deleteTask,
   getBoardDetail,
+  mergeTaskOrderAfterFilteredReorder,
   setSubtaskDone,
   taskCanComplete,
+  updateSubtaskPositions,
   updateTaskPositions,
 } from '@/utils/board'
 import { getPartnerUserId } from '@/utils/couple'
@@ -40,7 +42,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -50,7 +51,7 @@ import {
   TextInput,
   View,
 } from 'react-native'
-import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist'
+import DraggableFlatList from 'react-native-draggable-flatlist'
 
 function mixWithWhite(hex: string, amount: number): string {
   const h = hex.replace('#', '')
@@ -125,7 +126,8 @@ export default function BoardScreen() {
   const addTaskMutation = useMutation({
     mutationFn: async () => {
       const pts = Math.max(0, parseInt(newTaskPoints, 10) || 0)
-      const pos = board?.tasks?.length ?? 0
+      const list = board?.tasks ?? []
+      const pos = list.length ? Math.max(...list.map((t) => t.position)) + 1 : 0
       const partner = getPartnerUserId(profile?.couple, session!.user.id)
       const assignee = partner ?? session!.user.id
       const task = await createTask(id!, newTaskTitle.trim(), newTaskDesc.trim() || null, pts, pos, assignee)
@@ -150,6 +152,13 @@ export default function BoardScreen() {
     mutationFn: (orderedIds: string[]) => updateTaskPositions(id!, orderedIds),
     onSuccess: () => invalidateBoard(),
     onError: (err: Error) => Alert.alert('Order not saved', err.message),
+  })
+
+  const reorderSubtasksMutation = useMutation({
+    mutationFn: ({ taskId, orderedIds }: { taskId: string; orderedIds: string[] }) =>
+      updateSubtaskPositions(taskId, orderedIds),
+    onSuccess: invalidateBoard,
+    onError: (err: Error) => Alert.alert('Steps order not saved', err.message),
   })
 
   const completeMutation = useMutation({
@@ -240,8 +249,6 @@ export default function BoardScreen() {
     }
   }, [tasks, taskFilter, myId])
 
-  const reorderable = taskFilter === 'all'
-
   useEffect(() => {
     if (!detailTask) return
     if (!tasks.some((t) => t.id === detailTask.id)) {
@@ -266,6 +273,11 @@ export default function BoardScreen() {
   const detailIsAssignee = !!(shownTask && shownTask.assigned_to === myId)
   const detailIsCreator = !!(shownTask && shownTask.created_by === myId)
   const detailAssigneeName = shownTask ? nameForUser(shownTask.assigned_to) : ''
+  const detailCanReorderSubtasks = !!(
+    shownTask &&
+    shownTask.status === 'open' &&
+    (detailIsAssignee || detailIsCreator)
+  )
 
   function confirmDeleteBoard() {
     Alert.alert('Scrap this board?', 'Every task and step on it goes poof — for real.', [
@@ -367,9 +379,6 @@ export default function BoardScreen() {
         </Pressable>
       )
 
-      if (opts.reorderable) {
-        return <ScaleDecorator>{card}</ScaleDecorator>
-      }
       return card
     },
     [accent, nameForUser, openDetail],
@@ -378,11 +387,6 @@ export default function BoardScreen() {
   const renderDraggableRow = useCallback(
     ({ item, drag, isActive }: { item: Task; drag: () => void; isActive: boolean }) =>
       renderTaskCard(item, { drag, isActive, reorderable: true }),
-    [renderTaskCard],
-  )
-
-  const renderFilteredRow = useCallback(
-    ({ item }: { item: Task }) => renderTaskCard(item, { drag: () => {}, isActive: false, reorderable: false }),
     [renderTaskCard],
   )
 
@@ -524,32 +528,21 @@ export default function BoardScreen() {
       </SafeAreaView>
 
       <View className="flex-1">
-        {reorderable ? (
-          <DraggableFlatList
-            data={tasks}
-            keyExtractor={(item) => item.id}
-            onDragEnd={({ data }) => {
-              reorderMutation.mutate(data.map((t) => t.id))
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-            }}
-            activationDistance={10}
-            containerStyle={{ flex: 1 }}
-            contentContainerStyle={listContentStyle}
-            ListHeaderComponent={listHeader}
-            renderItem={renderDraggableRow}
-            ListEmptyComponent={emptyAll}
-          />
-        ) : (
-          <FlatList
-            data={filteredTasks}
-            keyExtractor={(item) => item.id}
-            renderItem={renderFilteredRow}
-            contentContainerStyle={listContentStyle}
-            className="flex-1"
-            ListHeaderComponent={listHeader}
-            ListEmptyComponent={emptyFiltered}
-          />
-        )}
+        <DraggableFlatList
+          data={filteredTasks}
+          keyExtractor={(item) => item.id}
+          onDragEnd={({ data }) => {
+            const merged = mergeTaskOrderAfterFilteredReorder(tasks, data.map((t) => t.id))
+            reorderMutation.mutate(merged)
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+          }}
+          activationDistance={10}
+          containerStyle={{ flex: 1 }}
+          contentContainerStyle={listContentStyle}
+          ListHeaderComponent={listHeader}
+          renderItem={renderDraggableRow}
+          ListEmptyComponent={tasks.length === 0 ? emptyAll : emptyFiltered}
+        />
 
         <Pressable
           className="absolute bottom-7 right-5 h-[56px] w-[56px] items-center justify-center rounded-full shadow-lg active:opacity-95"
@@ -757,131 +750,166 @@ export default function BoardScreen() {
           <Pressable className="absolute inset-0 bg-mate-overlay" onPress={() => setDetailTask(null)} />
           <KeyboardAvoidingView className="flex-1 justify-end" behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           {shownTask && (
-            <View className="max-h-[88%] rounded-t-[28px] bg-mate-surface p-[22px] pb-9">
-              <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                <View className="mb-2 gap-2.5">
-                  <View
-                    className="flex-row items-center gap-2 self-start rounded-full px-3.5 py-2"
-                    style={{ backgroundColor: mixWithWhite(accent, 0.8) }}
-                  >
-                    <Sparkles size={18} color={accent} />
-                    <Text className="font-mate-bold text-lg" style={{ color: accent }}>
-                      {shownTask.points} pts
+            <View className="max-h-[88%] flex-1 rounded-t-[28px] bg-mate-surface px-[22px] pb-9 pt-0">
+              <DraggableFlatList
+                data={shownTask.subtasks ?? []}
+                keyExtractor={(s) => s.id}
+                keyboardShouldPersistTaps="handled"
+                activationDistance={10}
+                containerStyle={{ flex: 1 }}
+                contentContainerStyle={{ flexGrow: 1, paddingBottom: 8 }}
+                onDragEnd={({ data }) => {
+                  if (!detailCanReorderSubtasks) return
+                  reorderSubtasksMutation.mutate({
+                    taskId: shownTask.id,
+                    orderedIds: data.map((x) => x.id),
+                  })
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                }}
+                ListHeaderComponent={
+                  <View>
+                    <View className="mb-2 gap-2.5 pt-1">
+                      <View
+                        className="flex-row items-center gap-2 self-start rounded-full px-3.5 py-2"
+                        style={{ backgroundColor: mixWithWhite(accent, 0.8) }}
+                      >
+                        <Sparkles size={18} color={accent} />
+                        <Text className="font-mate-bold text-lg" style={{ color: accent }}>
+                          {shownTask.points} pts
+                        </Text>
+                      </View>
+                      <Text className="font-mate-bold text-[22px] leading-7 text-mate-text">{shownTask.title}</Text>
+                      {shownTask.description ? (
+                        <Text className="font-mate text-[15px] leading-[22px] text-mate-text-muted">
+                          {shownTask.description}
+                        </Text>
+                      ) : null}
+                      <Text className="mt-1 font-mate text-sm text-mate-text-muted">
+                        {detailAssigneeName === 'You' ? (
+                          <>
+                            On <Text className="font-mate-semibold">your</Text> plate
+                          </>
+                        ) : (
+                          <>
+                            On <Text className="font-mate-semibold">{detailAssigneeName}</Text>
+                            {"'s plate"}
+                          </>
+                        )}
+                      </Text>
+                    </View>
+
+                    {shownTask.status === 'open' && !detailIsAssignee ? (
+                      <View className="mt-3 rounded-[14px] border-2 border-mate-border bg-mate-muted p-3.5">
+                        <Text className="font-mate text-sm leading-5 text-mate-text">
+                          {detailAssigneeName === 'You'
+                            ? "You're the only one who can tick steps and close this out."
+                            : `Only ${detailAssigneeName} can tick steps and close this out.`}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    <Text className="mt-4 font-mate-semibold text-base text-mate-text">Mini-steps</Text>
+                    <Text className="mb-2.5 font-mate text-xs text-mate-text-muted">
+                      All checked off before the big points drop.
+                      {detailCanReorderSubtasks ? ' Long-press the handle to reorder.' : ''}
                     </Text>
                   </View>
-                  <Text className="font-mate-bold text-[22px] leading-7 text-mate-text">{shownTask.title}</Text>
-                  {shownTask.description ? (
-                    <Text className="font-mate text-[15px] leading-[22px] text-mate-text-muted">
-                      {shownTask.description}
-                    </Text>
-                  ) : null}
-                  <Text className="mt-1 font-mate text-sm text-mate-text-muted">
-                    {detailAssigneeName === 'You' ? (
-                      <>
-                        On <Text className="font-mate-semibold">your</Text> plate
-                      </>
-                    ) : (
-                      <>
-                        On <Text className="font-mate-semibold">{detailAssigneeName}</Text>
-                        {"'s plate"}
-                      </>
+                }
+                renderItem={({ item: s, drag, isActive }) => {
+                  const canToggle = shownTask.status === 'open' && detailIsAssignee
+                  const rowMuted = shownTask.status === 'open' && !detailIsAssignee ? 'opacity-75' : ''
+                  const row = (
+                    <View
+                      className={`flex-row items-center gap-2 border-b border-mate-border py-3 ${rowMuted}`}
+                      style={{ opacity: isActive ? 0.92 : 1 }}
+                    >
+                      {detailCanReorderSubtasks ? (
+                        <Pressable onLongPress={drag} delayLongPress={180} className="py-0.5 pr-0.5">
+                          <GripVertical size={20} color={playful.textMuted} />
+                        </Pressable>
+                      ) : (
+                        <View className="w-0" />
+                      )}
+                      <Pressable
+                        className="min-w-0 flex-1 flex-row items-center gap-3"
+                        disabled={!canToggle}
+                        onPress={() =>
+                          canToggle && toggleSubMutation.mutate({ subId: s.id, done: !s.done })
+                        }
+                      >
+                        {s.done ? (
+                          <CheckCircle2 size={22} color={playful.success} />
+                        ) : (
+                          <Circle size={22} color={playful.textMuted} />
+                        )}
+                        <Text
+                          className={`flex-1 font-mate-medium text-[15px] ${s.done ? 'text-mate-text-muted line-through' : 'text-mate-text'}`}
+                        >
+                          {s.title}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        hitSlop={10}
+                        onPress={() => deleteSubMutation.mutate(s.id)}
+                        disabled={shownTask.status !== 'open' || (!detailIsAssignee && !detailIsCreator)}
+                      >
+                        <Trash2 size={16} color={playful.textMuted} />
+                      </Pressable>
+                    </View>
+                  )
+                  return row
+                }}
+                ListFooterComponent={
+                  <View>
+                    {shownTask.status === 'open' && (detailIsAssignee || detailIsCreator) && (
+                      <View className="mt-3 flex-row items-center gap-2.5">
+                        <TextInput
+                          className="flex-1 rounded-[14px] border-2 border-mate-border p-3 font-mate text-[15px] text-mate-text"
+                          style={{ includeFontPadding: false, lineHeight: undefined }}
+                          value={newSubtaskTitle}
+                          onChangeText={setNewSubtaskTitle}
+                          placeholder="Break it into a step…"
+                          placeholderTextColor={playful.textMuted}
+                          returnKeyType="done"
+                          onSubmitEditing={() => newSubtaskTitle.trim() && createSubMutation.mutate()}
+                        />
+                        <Pressable
+                          className="h-11 w-11 items-center justify-center rounded-[14px] active:opacity-90"
+                          style={{ backgroundColor: accent }}
+                          disabled={!newSubtaskTitle.trim() || createSubMutation.isPending}
+                          onPress={() => newSubtaskTitle.trim() && createSubMutation.mutate()}
+                        >
+                          <Plus size={20} color="#fff" />
+                        </Pressable>
+                      </View>
                     )}
-                  </Text>
-                </View>
 
-                {shownTask.status === 'open' && !detailIsAssignee ? (
-                  <View className="mt-3 rounded-[14px] border-2 border-mate-border bg-mate-muted p-3.5">
-                    <Text className="font-mate text-sm leading-5 text-mate-text">
-                      {detailAssigneeName === 'You'
-                        ? "You're the only one who can tick steps and close this out."
-                        : `Only ${detailAssigneeName} can tick steps and close this out.`}
-                    </Text>
-                  </View>
-                ) : null}
+                    {shownTask.status === 'open' && detailIsAssignee ? (
+                      <Pressable
+                        className="mt-5 flex-row items-center justify-center gap-2.5 rounded-2xl py-4 active:opacity-90"
+                        style={{
+                          backgroundColor: taskCanComplete(shownTask) ? playful.success : playful.border,
+                        }}
+                        disabled={!taskCanComplete(shownTask) || completeMutation.isPending}
+                        onPress={() => completeMutation.mutate(shownTask.id)}
+                      >
+                        <Sparkles size={18} color="#fff" />
+                        <Text className="font-mate-semibold text-base text-white">
+                          Crush it — +{shownTask.points} pts
+                        </Text>
+                      </Pressable>
+                    ) : null}
 
-                <Text className="mt-4 font-mate-semibold text-base text-mate-text">Mini-steps</Text>
-                <Text className="mb-2.5 font-mate text-xs text-mate-text-muted">
-                  All checked off before the big points drop.
-                </Text>
-
-                {(shownTask.subtasks ?? []).map((s: Subtask) => (
-                  <Pressable
-                    key={s.id}
-                    className={`flex-row items-center gap-3 border-b border-mate-border py-3 ${shownTask.status === 'open' && !detailIsAssignee ? 'opacity-75' : ''}`}
-                    disabled={shownTask.status !== 'open' || !detailIsAssignee}
-                    onPress={() =>
-                      shownTask.status === 'open' &&
-                      detailIsAssignee &&
-                      toggleSubMutation.mutate({ subId: s.id, done: !s.done })
-                    }
-                  >
-                    {s.done ? (
-                      <CheckCircle2 size={22} color={playful.success} />
-                    ) : (
-                      <Circle size={22} color={playful.textMuted} />
-                    )}
-                    <Text
-                      className={`flex-1 font-mate-medium text-[15px] ${s.done ? 'text-mate-text-muted line-through' : 'text-mate-text'}`}
-                    >
-                      {s.title}
-                    </Text>
                     <Pressable
-                      hitSlop={10}
-                      onPress={() => deleteSubMutation.mutate(s.id)}
-                      disabled={shownTask.status !== 'open' || (!detailIsAssignee && !detailIsCreator)}
+                      className="mb-2 mt-6 flex-row items-center justify-center gap-2 active:opacity-80"
+                      onPress={() => confirmDeleteTask(shownTask)}
                     >
-                      <Trash2 size={16} color={playful.textMuted} />
-                    </Pressable>
-                  </Pressable>
-                ))}
-
-                {shownTask.status === 'open' && (detailIsAssignee || detailIsCreator) && (
-                  <View className="mt-3 flex-row items-center gap-2.5">
-                    <TextInput
-                      className="flex-1 rounded-[14px] border-2 border-mate-border p-3 font-mate text-[15px] text-mate-text"
-                      style={{ includeFontPadding: false, lineHeight: undefined }}
-                      value={newSubtaskTitle}
-                      onChangeText={setNewSubtaskTitle}
-                      placeholder="Break it into a step…"
-                      placeholderTextColor={playful.textMuted}
-                      returnKeyType="done"
-                      onSubmitEditing={() => newSubtaskTitle.trim() && createSubMutation.mutate()}
-                    />
-                    <Pressable
-                      className="h-11 w-11 items-center justify-center rounded-[14px] active:opacity-90"
-                      style={{ backgroundColor: accent }}
-                      disabled={!newSubtaskTitle.trim() || createSubMutation.isPending}
-                      onPress={() => newSubtaskTitle.trim() && createSubMutation.mutate()}
-                    >
-                      <Plus size={20} color="#fff" />
+                      <Trash2 size={16} color={playful.danger} />
+                      <Text className="font-mate-medium text-[15px] text-mate-danger">Delete this task</Text>
                     </Pressable>
                   </View>
-                )}
-
-                {shownTask.status === 'open' && detailIsAssignee ? (
-                  <Pressable
-                    className="mt-5 flex-row items-center justify-center gap-2.5 rounded-2xl py-4 active:opacity-90"
-                    style={{
-                      backgroundColor: taskCanComplete(shownTask) ? playful.success : playful.border,
-                    }}
-                    disabled={!taskCanComplete(shownTask) || completeMutation.isPending}
-                    onPress={() => completeMutation.mutate(shownTask.id)}
-                  >
-                    <Sparkles size={18} color="#fff" />
-                    <Text className="font-mate-semibold text-base text-white">
-                      Crush it — +{shownTask.points} pts
-                    </Text>
-                  </Pressable>
-                ) : null}
-
-                <Pressable
-                  className="mb-2 mt-6 flex-row items-center justify-center gap-2 active:opacity-80"
-                  onPress={() => confirmDeleteTask(shownTask)}
-                >
-                  <Trash2 size={16} color={playful.danger} />
-                  <Text className="font-mate-medium text-[15px] text-mate-danger">Delete this task</Text>
-                </Pressable>
-              </ScrollView>
+                }
+              />
             </View>
           )}
           </KeyboardAvoidingView>

@@ -1,3 +1,4 @@
+import { triggerPushNotification } from '@/utils/pushNotifications'
 import { supabase } from '@/utils/supabase'
 
 export type Board = {
@@ -5,8 +6,22 @@ export type Board = {
   couple_id: string
   title: string
   color: string
+  /** Present after `20260412000001_board_position` migration; omitted in older DBs. */
+  position?: number
   created_by: string | null
   created_at: string
+}
+
+function isMissingBoardPositionColumn(err: { message?: string; code?: string }): boolean {
+  const m = (err.message ?? '').toLowerCase()
+  if (!m.includes('position')) return false
+  return (
+    m.includes('does not exist') ||
+    m.includes('unknown') ||
+    m.includes('schema cache') ||
+    m.includes('could not find') ||
+    m.includes('42703')
+  )
 }
 
 export type Subtask = {
@@ -39,13 +54,20 @@ export type TaskListFilter = 'my_open' | 'i_assigned_open' | 'done' | 'all'
 export type BoardDetail = Board & { tasks: Task[] }
 
 export async function getBoards(coupleId: string): Promise<Board[]> {
+  const ordered = await supabase
+    .from('boards')
+    .select('*')
+    .eq('couple_id', coupleId)
+    .order('position', { ascending: true })
+  if (!ordered.error) return (ordered.data ?? []) as Board[]
+  if (!isMissingBoardPositionColumn(ordered.error)) throw ordered.error
   const { data, error } = await supabase
     .from('boards')
     .select('*')
     .eq('couple_id', coupleId)
     .order('created_at', { ascending: false })
   if (error) throw error
-  return data
+  return (data ?? []) as Board[]
 }
 
 export type BoardWithPending = Board & { pending_count: number }
@@ -72,14 +94,37 @@ export async function getBoardsWithPendingCounts(
   return boards.map((b) => ({ ...b, pending_count: counts.get(b.id) ?? 0 }))
 }
 
-export async function createBoard(coupleId: string, title: string, color: string): Promise<Board> {
-  const { data: { user } } = await supabase.auth.getUser()
+async function nextBoardPosition(coupleId: string): Promise<number | null> {
   const { data, error } = await supabase
     .from('boards')
-    .insert({ couple_id: coupleId, title, color, created_by: user!.id })
-    .select()
-    .single()
+    .select('position')
+    .eq('couple_id', coupleId)
+    .order('position', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    if (isMissingBoardPositionColumn(error)) return null
+    throw error
+  }
+  return (data?.position ?? -1) + 1
+}
+
+export async function createBoard(coupleId: string, title: string, color: string): Promise<Board> {
+  const { data: { user } } = await supabase.auth.getUser()
+  const position = await nextBoardPosition(coupleId)
+  const base = { couple_id: coupleId, title, color, created_by: user!.id }
+  let res =
+    position === null
+      ? await supabase.from('boards').insert(base).select().single()
+      : await supabase.from('boards').insert({ ...base, position }).select().single()
+  if (res.error && isMissingBoardPositionColumn(res.error)) {
+    res = await supabase.from('boards').insert(base).select().single()
+  }
+  const { data, error } = res
   if (error) throw error
+  void triggerPushNotification({ action: 'board_created', boardId: data.id }).catch((e) =>
+    console.warn('[MateSync] push board_created:', e),
+  )
   return data
 }
 
@@ -129,6 +174,11 @@ export async function createTask(
     .select()
     .single()
   if (error) throw error
+  if (assignedToUserId !== user!.id) {
+    void triggerPushNotification({ action: 'task_assigned', taskId: data.id }).catch((e) =>
+      console.warn('[MateSync] push task_assigned:', e),
+    )
+  }
   return { ...data, subtasks: [] }
 }
 
@@ -140,6 +190,43 @@ export async function updateTaskPositions(boardId: string, orderedTaskIds: strin
   )
 }
 
+/** After reordering a filtered task list, merge back into full board order by `position`. */
+export function mergeTaskOrderAfterFilteredReorder(
+  allTasksSorted: Task[],
+  filteredNewOrderIds: string[],
+): string[] {
+  const visibleSet = new Set(filteredNewOrderIds)
+  const merged: string[] = []
+  let v = 0
+  for (const t of allTasksSorted) {
+    if (visibleSet.has(t.id)) {
+      merged.push(filteredNewOrderIds[v++])
+    } else {
+      merged.push(t.id)
+    }
+  }
+  return merged
+}
+
+export async function updateSubtaskPositions(taskId: string, orderedSubtaskIds: string[]): Promise<void> {
+  await Promise.all(
+    orderedSubtaskIds.map((id, index) =>
+      supabase.from('subtasks').update({ position: index }).eq('id', id).eq('task_id', taskId),
+    ),
+  )
+}
+
+export async function updateBoardPositions(coupleId: string, orderedBoardIds: string[]): Promise<void> {
+  const results = await Promise.all(
+    orderedBoardIds.map((id, index) =>
+      supabase.from('boards').update({ position: index }).eq('id', id).eq('couple_id', coupleId),
+    ),
+  )
+  const firstErr = results.find((r) => r.error)?.error
+  if (firstErr && isMissingBoardPositionColumn(firstErr)) return
+  if (firstErr) throw firstErr
+}
+
 export async function completeTask(taskId: string): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser()
   const { error } = await supabase
@@ -148,6 +235,9 @@ export async function completeTask(taskId: string): Promise<void> {
     .eq('id', taskId)
     .eq('status', 'open')
   if (error) throw error
+  void triggerPushNotification({ action: 'task_completed', taskId }).catch((e) =>
+    console.warn('[MateSync] push task_completed:', e),
+  )
 }
 
 export async function deleteTask(taskId: string): Promise<void> {

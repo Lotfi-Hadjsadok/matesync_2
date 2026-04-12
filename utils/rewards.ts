@@ -1,3 +1,4 @@
+import { triggerPushNotification } from '@/utils/pushNotifications'
 import { supabase } from '@/utils/supabase'
 
 export type Reward = {
@@ -67,6 +68,9 @@ export async function createReward(
     .select()
     .single()
   if (error) throw error
+  void triggerPushNotification({ action: 'reward_created', rewardId: data.id }).catch((e) =>
+    console.warn('[MateSync] push reward_created:', e),
+  )
   return data
 }
 
@@ -75,20 +79,56 @@ export async function deleteReward(rewardId: string): Promise<void> {
   if (error) throw error
 }
 
+/** After reordering a filtered reward list, merge back into full shelf order by `position`. */
+export function mergeRewardOrderAfterFilteredReorder(
+  allRewardsSorted: Reward[],
+  filteredNewOrderIds: string[],
+): string[] {
+  const visibleSet = new Set(filteredNewOrderIds)
+  const merged: string[] = []
+  let v = 0
+  for (const r of allRewardsSorted) {
+    if (visibleSet.has(r.id)) {
+      merged.push(filteredNewOrderIds[v++])
+    } else {
+      merged.push(r.id)
+    }
+  }
+  return merged
+}
+
+export async function updateRewardPositions(coupleId: string, orderedRewardIds: string[]): Promise<void> {
+  await Promise.all(
+    orderedRewardIds.map((id, index) =>
+      supabase.from('rewards').update({ position: index }).eq('id', id).eq('couple_id', coupleId),
+    ),
+  )
+}
+
 export async function redeemReward(rewardId: string): Promise<string> {
   const { data, error } = await supabase.rpc('redeem_reward', { p_reward_id: rewardId })
   if (error) throw error
-  return data as string
+  const redemptionId = data as string
+  void triggerPushNotification({ action: 'reward_pending', redemptionId }).catch((e) =>
+    console.warn('[MateSync] push reward_pending:', e),
+  )
+  return redemptionId
 }
 
 export async function approveRedemption(redemptionId: string): Promise<void> {
   const { error } = await supabase.rpc('approve_redemption', { p_redemption_id: redemptionId })
   if (error) throw error
+  void triggerPushNotification({ action: 'reward_approved', redemptionId }).catch((e) =>
+    console.warn('[MateSync] push reward_approved:', e),
+  )
 }
 
 export async function rejectRedemption(redemptionId: string): Promise<void> {
   const { error } = await supabase.rpc('reject_redemption', { p_redemption_id: redemptionId })
   if (error) throw error
+  void triggerPushNotification({ action: 'reward_rejected', redemptionId }).catch((e) =>
+    console.warn('[MateSync] push reward_rejected:', e),
+  )
 }
 
 /** Pending redemptions sent by the partner that the current user needs to act on. */

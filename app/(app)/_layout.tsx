@@ -1,4 +1,5 @@
 import { fonts, playful } from '@/constants/theme'
+import { useMateSyncPush } from '@/hooks/useMateSyncPush'
 import { useSessionStore } from '@/stores/sessionStore'
 import { Redirect, Tabs } from 'expo-router'
 import { Gift, LayoutGrid, UserCircle } from 'lucide-react-native'
@@ -7,6 +8,8 @@ import { ActivityIndicator, View } from 'react-native'
 export default function AppLayout() {
   const session = useSessionStore((s) => s.session)
   const sessionLoading = useSessionStore((s) => s.loading)
+
+  useMateSyncPush(session?.user?.id)
 
   if (sessionLoading) {
     return (
