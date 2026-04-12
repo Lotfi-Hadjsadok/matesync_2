@@ -1,3 +1,4 @@
+import { useSessionStore } from '@/stores/sessionStore'
 import { supabase } from '@/utils/supabase'
 import * as Linking from 'expo-linking'
 import * as WebBrowser from 'expo-web-browser'
@@ -50,11 +51,17 @@ export async function createSessionFromUrl(url: string) {
   return null
 }
 
+/** Clears in-memory session first so layout guards can navigate away, then drops local auth storage. */
+export async function signOutUser() {
+  useSessionStore.setState({ session: null, loading: false })
+  await supabase.auth.signOut({ scope: 'local' })
+}
+
 export async function signInWithGoogle() {
   if (Platform.OS === 'web') {
     const origin =
       typeof window !== 'undefined' ? window.location.origin : ''
-    const redirectTo = `${origin}/welcome`
+    const redirectTo = `${origin}/auth/callback`
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {

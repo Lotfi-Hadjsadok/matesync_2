@@ -1,10 +1,10 @@
 import { playful } from '@/constants/theme'
 import { useProfile } from '@/hooks/useProfile'
 import { useSessionStore } from '@/stores/sessionStore'
-import { Redirect } from 'expo-router'
+import { Redirect, Stack } from 'expo-router'
 import { ActivityIndicator, View } from 'react-native'
 
-export default function Index() {
+export default function AuthLayout() {
   const session = useSessionStore((s) => s.session)
   const sessionLoading = useSessionStore((s) => s.loading)
   const { data: profile, isLoading: profileLoading } = useProfile(session)
@@ -21,5 +21,5 @@ export default function Index() {
     return <Redirect href={profile?.couple_id ? '/(app)' : '/onboarding'} />
   }
 
-  return <Redirect href="/login" />
+  return <Stack screenOptions={{ headerShown: false }} />
 }

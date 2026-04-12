@@ -3,35 +3,31 @@ import { ActivityIndicator, View } from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { supabase } from '@/utils/supabase'
 
-function firstParam(v: string | string[] | undefined) {
-  return Array.isArray(v) ? v[0] : v
-}
-
 export default function AuthCallbackScreen() {
   const router = useRouter()
   const params = useLocalSearchParams<{
     code?: string | string[]
     error?: string | string[]
   }>()
-  const code = firstParam(params.code)
-  const oauthError = firstParam(params.error)
+  const code = Array.isArray(params.code) ? params.code[0] : params.code
+  const oauthError = Array.isArray(params.error) ? params.error[0] : params.error
 
   useEffect(() => {
     async function run() {
       if (oauthError) {
-        router.replace('/')
+        router.replace('/login')
         return
       }
       if (!code) {
-        router.replace('/')
+        router.replace('/login')
         return
       }
       const { error } = await supabase.auth.exchangeCodeForSession(code)
       if (error) {
-        router.replace('/')
+        router.replace('/login')
         return
       }
-      router.replace('/welcome')
+      router.replace('/')
     }
     run()
   }, [code, oauthError, router])
