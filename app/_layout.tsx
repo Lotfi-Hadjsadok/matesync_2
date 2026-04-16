@@ -1,16 +1,16 @@
 import 'react-native-gesture-handler'
 import '../global.css'
 
-import {
-    Fredoka_400Regular,
-    Fredoka_500Medium,
-    Fredoka_600SemiBold,
-    Fredoka_700Bold,
-    useFonts,
-} from '@expo-google-fonts/fredoka'
-import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { initializeSessionStore } from '@/stores/sessionStore'
 import { configureNotificationPresentation } from '@/utils/pushNotifications'
+import {
+  Fredoka_400Regular,
+  Fredoka_500Medium,
+  Fredoka_600SemiBold,
+  Fredoka_700Bold,
+  useFonts,
+} from '@expo-google-fonts/fredoka'
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Stack } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { useEffect, useState } from 'react'

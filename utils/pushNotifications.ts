@@ -23,6 +23,7 @@ export function configureNotificationPresentation() {
       shouldSetBadge: true,
       shouldShowBanner: true,
       shouldShowList: true,
+      priority: Notifications.AndroidNotificationPriority.HIGH,
     }),
   })
 }
@@ -31,7 +32,7 @@ export async function ensureAndroidNotificationChannel() {
   if (Platform.OS !== 'android') return
   await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
     name: 'MateSync',
-    importance: Notifications.AndroidImportance.DEFAULT,
+    importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],
     lightColor: '#FFFBFC',
   })

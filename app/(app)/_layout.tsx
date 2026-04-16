@@ -4,10 +4,12 @@ import { useSessionStore } from '@/stores/sessionStore'
 import { Redirect, Tabs } from 'expo-router'
 import { Gift, LayoutGrid, UserCircle } from 'lucide-react-native'
 import { ActivityIndicator, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 export default function AppLayout() {
   const session = useSessionStore((s) => s.session)
   const sessionLoading = useSessionStore((s) => s.loading)
+  const insets = useSafeAreaInsets()
 
   useMateSyncPush(session?.user?.id)
 
@@ -30,8 +32,8 @@ export default function AppLayout() {
           backgroundColor: playful.surface,
           borderTopColor: playful.border,
           borderTopWidth: 2,
-          height: 62,
-          paddingBottom: 8,
+          height: 62 + insets.bottom,
+          paddingBottom: 8 + insets.bottom,
         },
         tabBarActiveTintColor: playful.accent,
         tabBarInactiveTintColor: playful.textMuted,

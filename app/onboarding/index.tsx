@@ -1,20 +1,19 @@
 import { playful } from '@/constants/theme'
-import { createCouple, joinCouple } from '@/utils/couple'
 import { signOutUser } from '@/utils/auth'
+import { createCouple, joinCouple } from '@/utils/couple'
 import { useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'expo-router'
 import { Heart, LogOut, Mail, Sparkles } from 'lucide-react-native'
 import { useState } from 'react'
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
 } from 'react-native'
 
 export default function OnboardingScreen() {
@@ -59,7 +58,7 @@ export default function OnboardingScreen() {
   return (
     <KeyboardAvoidingView
       className="flex-1 bg-mate-bg"
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior="padding"
     >
       <ScrollView
         className="flex-1"

@@ -5,54 +5,53 @@ import { useProfile } from '@/hooks/useProfile'
 import { useSessionStore } from '@/stores/sessionStore'
 import { getPartnerUserId } from '@/utils/couple'
 import {
-    approveRedemption,
-    createReward,
-    deleteReward,
-    getCoupleBalancesView,
-    getMyPendingRedemptions,
-    getPendingRedemptionsForMe,
-    getRedemptionCounts,
-    getRedemptionHistory,
-    getRewards,
-    mergeRewardOrderAfterFilteredReorder,
-    redeemReward,
-    rejectRedemption,
-    updateRewardPositions,
-    type Reward,
-    type RewardListFilter,
+  approveRedemption,
+  createReward,
+  deleteReward,
+  getCoupleBalancesView,
+  getMyPendingRedemptions,
+  getPendingRedemptionsForMe,
+  getRedemptionCounts,
+  getRedemptionHistory,
+  getRewards,
+  mergeRewardOrderAfterFilteredReorder,
+  redeemReward,
+  rejectRedemption,
+  updateRewardPositions,
+  type Reward,
+  type RewardListFilter,
 } from '@/utils/rewards'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as Haptics from 'expo-haptics'
 import {
-    CheckCircle2,
-    Clock,
-    FileText,
-    Gift,
-    GripVertical,
-    Heart,
-    History,
-    PartyPopper,
-    Plus,
-    Repeat2,
-    Sparkles,
-    Trash2,
-    XCircle,
+  CheckCircle2,
+  Clock,
+  FileText,
+  Gift,
+  GripVertical,
+  Heart,
+  History,
+  PartyPopper,
+  Plus,
+  Repeat2,
+  Sparkles,
+  Trash2,
+  XCircle,
 } from 'lucide-react-native'
 import { useCallback, useMemo, useState } from 'react'
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    Pressable,
-    ScrollView,
-    Switch,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Pressable,
+  ScrollView,
+  Switch,
+  Text,
+  TextInput,
+  View,
 } from 'react-native'
-import { NestableDraggableFlatList, NestableScrollContainer } from 'react-native-draggable-flatlist'
+import DraggableFlatList from 'react-native-draggable-flatlist'
 
 const REWARD_COST_PRESETS = ['25', '50', '100', '150'] as const
 
@@ -240,6 +239,10 @@ export default function RewardsScreen() {
     onError: (err: Error) => Alert.alert('Order not saved', err.message),
   })
 
+  function handleOpenCreateReward() {
+    setCreateOpen(true)
+  }
+
   const renderRewardDraggableRow = useCallback(
     ({
       item: r,
@@ -378,14 +381,9 @@ export default function RewardsScreen() {
     ],
   )
 
-  return (
-    <SafeAreaView className="flex-1 bg-mate-bg" edges={['top']}>
-      <NestableScrollContainer
-        className="flex-1"
-        contentContainerClassName="px-5 pb-12 pt-1"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Header */}
+  const rewardsListHeader = useMemo(
+    () => (
+      <View>
         <View className="mb-5 items-center gap-2">
           <View className="h-14 w-14 items-center justify-center rounded-[20px] border-2 border-mate-border bg-mate-surface">
             <Gift size={28} color={playful.accent} />
@@ -396,7 +394,6 @@ export default function RewardsScreen() {
           </Text>
         </View>
 
-        {/* Balance card */}
         <View className="mb-4 rounded-3xl border-2 border-mate-border bg-mate-surface p-5">
           <Text className="mb-1.5 font-mate-semibold text-[13px] text-mate-text-muted">Your points stash</Text>
           <View className="flex-row items-center gap-2">
@@ -423,7 +420,6 @@ export default function RewardsScreen() {
           )}
         </View>
 
-        {/* Pending approval banner (partner's requests I need to approve) */}
         {pendingForMe.length > 0 && (
           <View className="mb-4 overflow-hidden rounded-3xl border-2 border-amber-400/60 bg-amber-50 dark:bg-amber-950/30">
             <View className="flex-row items-center gap-2 border-b border-amber-400/30 px-4 py-3">
@@ -473,11 +469,10 @@ export default function RewardsScreen() {
           </View>
         )}
 
-        {/* Action buttons row */}
         <View className="mb-5 flex-row gap-2.5">
           <Pressable
             className="flex-1 flex-row items-center justify-center gap-2 rounded-[18px] bg-mate-accent py-4 active:opacity-90"
-            onPress={() => setCreateOpen(true)}
+            onPress={handleOpenCreateReward}
           >
             <Plus size={20} color="#fff" />
             <Text className="font-mate-semibold text-base text-white">Dream up a treat</Text>
@@ -490,7 +485,6 @@ export default function RewardsScreen() {
           </Pressable>
         </View>
 
-        {/* Filter tabs */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -516,61 +510,78 @@ export default function RewardsScreen() {
             </Pressable>
           ))}
         </ScrollView>
+      </View>
+    ),
+    [approveMutation, members, myBalance, myId, pendingForMe, rejectMutation, rewardFilter],
+  )
 
-        {/* Reward list */}
-        {isLoading ? (
-          <View className="mt-8 items-center">
-            <ActivityIndicator size="large" color={playful.accent} />
-          </View>
-        ) : rewards.length === 0 ? (
-          <View className="items-center gap-2.5 py-8">
-            <Sparkles size={36} color={playful.accentSoft} />
-            <Text className="font-mate-semibold text-lg text-mate-text">{"Shelf's empty"}</Text>
-            <Text className="text-center font-mate text-sm text-mate-text-muted">
-              Add a massage, movie night, or breakfast in bed — whatever feels like you two.
-            </Text>
-          </View>
-        ) : filteredRewards.length === 0 ? (
-          <View className="items-center gap-2.5 py-8">
-            <Sparkles size={36} color={playful.accentSoft} />
-            <Text className="text-center font-mate-semibold text-lg text-mate-text">
-              {rewardFilter === 'for_me'
-                ? 'Nothing for you yet'
-                : rewardFilter === 'i_created'
-                  ? "You haven't added any treats"
-                  : 'Nothing here'}
-            </Text>
-            <Text className="text-center font-mate text-sm text-mate-text-muted">
-              {rewardFilter === 'for_me'
-                ? 'Nudge your partner to stock the shelf, or peek at "I made" / "All".'
-                : 'Add something sweet for them or try another filter.'}
-            </Text>
-          </View>
-        ) : (
-          <NestableDraggableFlatList
-            key={rewardFilter}
-            data={filteredRewards}
-            keyExtractor={(r) => r.id}
-            renderItem={renderRewardDraggableRow}
-            onDragEnd={({ data }) => {
-              const merged = mergeRewardOrderAfterFilteredReorder(
-                rewards,
-                data.map((x) => x.id),
-              )
-              reorderRewardsMutation.mutate(merged)
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-            }}
-            scrollEnabled={false}
-            contentContainerStyle={{ paddingBottom: 4 }}
-          />
-        )}
-      </NestableScrollContainer>
+  const showDraggableRewards = !isLoading && rewards.length > 0 && filteredRewards.length > 0
+
+  return (
+    <SafeAreaView className="flex-1 bg-mate-bg" edges={['top']}>
+      {showDraggableRewards ? (
+        <DraggableFlatList
+          key={rewardFilter}
+          data={filteredRewards}
+          keyExtractor={(r) => r.id}
+          containerStyle={{ flex: 1 }}
+          contentContainerClassName="px-5 pb-12 pt-1"
+          ListHeaderComponent={rewardsListHeader}
+          renderItem={renderRewardDraggableRow}
+          activationDistance={10}
+          onDragEnd={({ data }) => {
+            const merged = mergeRewardOrderAfterFilteredReorder(
+              rewards,
+              data.map((x) => x.id),
+            )
+            reorderRewardsMutation.mutate(merged)
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+          }}
+        />
+      ) : (
+        <ScrollView
+          className="flex-1"
+          contentContainerClassName="px-5 pb-12 pt-1"
+          showsVerticalScrollIndicator={false}
+        >
+          {rewardsListHeader}
+          {isLoading ? (
+            <View className="mt-8 items-center">
+              <ActivityIndicator size="large" color={playful.accent} />
+            </View>
+          ) : rewards.length === 0 ? (
+            <View className="items-center gap-2.5 py-8">
+              <Sparkles size={36} color={playful.accentSoft} />
+              <Text className="font-mate-semibold text-lg text-mate-text">{"Shelf's empty"}</Text>
+              <Text className="text-center font-mate text-sm text-mate-text-muted">
+                Add a massage, movie night, or breakfast in bed — whatever feels like you two.
+              </Text>
+            </View>
+          ) : (
+            <View className="items-center gap-2.5 py-8">
+              <Sparkles size={36} color={playful.accentSoft} />
+              <Text className="text-center font-mate-semibold text-lg text-mate-text">
+                {rewardFilter === 'for_me'
+                  ? 'Nothing for you yet'
+                  : rewardFilter === 'i_created'
+                    ? "You haven't added any treats"
+                    : 'Nothing here'}
+              </Text>
+              <Text className="text-center font-mate text-sm text-mate-text-muted">
+                {rewardFilter === 'for_me'
+                  ? 'Nudge your partner to stock the shelf, or peek at "I made" / "All".'
+                  : 'Add something sweet for them or try another filter.'}
+              </Text>
+            </View>
+          )}
+        </ScrollView>
+      )}
 
       {/* ── Create reward modal ── */}
       <Modal visible={createOpen} transparent animationType="slide" onRequestClose={() => setCreateOpen(false)}>
         <View className="flex-1">
           <Pressable className="absolute inset-0 bg-mate-overlay" onPress={() => setCreateOpen(false)} />
-          <KeyboardAvoidingView className="flex-1 justify-end" behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <KeyboardAvoidingView className="flex-1 justify-end" behavior="padding">
           <View className="max-h-[92%] overflow-hidden rounded-t-[28px] bg-mate-surface">
             <View className="items-center pt-3 pb-1">
               <View className="h-1 w-10 rounded-full bg-mate-border" />

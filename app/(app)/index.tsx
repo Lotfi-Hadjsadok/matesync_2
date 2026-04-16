@@ -20,7 +20,6 @@ import {
   Alert,
   KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   Text,
   TextInput,
@@ -68,10 +67,27 @@ export default function BoardsScreen() {
 
   const reorderBoardsMutation = useMutation({
     mutationFn: (orderedIds: string[]) => updateBoardPositions(coupleId, orderedIds),
-    onSuccess: () => {
+    onMutate: async (orderedIds) => {
+      await queryClient.cancelQueries({ queryKey: ['boards', coupleId, viewerId] })
+      const previous = queryClient.getQueryData<BoardWithPending[]>(['boards', coupleId, viewerId])
+      if (!previous?.length) return { previous }
+      const byId = new Map(previous.map((b) => [b.id, b]))
+      const next: BoardWithPending[] = orderedIds.flatMap((bid, i) => {
+        const b = byId.get(bid)
+        return b ? [{ ...b, position: i }] : []
+      })
+      queryClient.setQueryData(['boards', coupleId, viewerId], next)
+      return { previous }
+    },
+    onError: (err: Error, _orderedIds, ctx) => {
+      if (ctx?.previous != null) {
+        queryClient.setQueryData(['boards', coupleId, viewerId], ctx.previous)
+      }
+      Alert.alert('Order not saved', err.message)
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['boards', coupleId] })
     },
-    onError: (err: Error) => Alert.alert('Order not saved', err.message),
   })
 
   const renderBoardRow = useCallback(
@@ -94,7 +110,10 @@ export default function BoardsScreen() {
         opacity: isActive ? 0.95 : 1,
       }
       const row = (
-        <View className="min-h-[120px] w-full flex-row rounded-[22px] border-2 border-white/55" style={surfaceStyle}>
+        <View
+          className="mb-3 min-h-[120px] w-full flex-row rounded-[22px] border-2 border-white/55"
+          style={surfaceStyle}
+        >
           <Pressable onLongPress={drag} delayLongPress={180} className="justify-center pl-2 pr-1">
             <GripVertical size={22} color="rgba(255,255,255,0.72)" />
           </Pressable>
@@ -142,7 +161,7 @@ export default function BoardsScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-mate-bg">
-      <View className="flex-row items-end justify-between px-5 pb-4 pt-2">
+      <View className="flex-row items-end justify-between px-3 pb-4 pt-2">
         <View>
           <Text className="font-mate-semibold text-xs uppercase tracking-wider text-mate-accent">
             {profile?.couple?.name ?? ''}
@@ -197,7 +216,7 @@ export default function BoardsScreen() {
             data={boards}
             keyExtractor={(b) => b.id}
             containerStyle={{ flex: 1 }}
-            contentContainerClassName="gap-3 p-3 pt-1"
+            contentContainerStyle={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 12 }}
             activationDistance={10}
             renderItem={renderBoardRow}
             onDragEnd={({ data }) => {
@@ -211,7 +230,7 @@ export default function BoardsScreen() {
       <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={closeCreateModal}>
         <View className="flex-1">
         <Pressable className="absolute inset-0 bg-mate-overlay" onPress={closeCreateModal} />
-        <KeyboardAvoidingView className="flex-1 justify-end" behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <KeyboardAvoidingView className="flex-1 justify-end" behavior="padding">
         <View className="gap-4 rounded-t-[28px] border-2 border-mate-border border-b-0 bg-mate-surface px-6 pb-9 pt-6">
           <Text className="font-mate-bold text-[22px] text-mate-text">New board</Text>
           <TextInput

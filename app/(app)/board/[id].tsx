@@ -3,7 +3,7 @@ import { REFETCH_BOARD_MS } from '@/constants/reactQuery'
 import { playful } from '@/constants/theme'
 import { useProfile } from '@/hooks/useProfile'
 import { useSessionStore } from '@/stores/sessionStore'
-import type { Task, TaskListFilter } from '@/utils/board'
+import type { BoardDetail, Subtask, Task, TaskListFilter } from '@/utils/board'
 import {
   completeTask,
   createSubtask,
@@ -44,7 +44,6 @@ import {
   Alert,
   KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -150,15 +149,57 @@ export default function BoardScreen() {
 
   const reorderMutation = useMutation({
     mutationFn: (orderedIds: string[]) => updateTaskPositions(id!, orderedIds),
-    onSuccess: () => invalidateBoard(),
-    onError: (err: Error) => Alert.alert('Order not saved', err.message),
+    onMutate: async (mergedIds) => {
+      await queryClient.cancelQueries({ queryKey: ['board', id] })
+      const previous = queryClient.getQueryData<BoardDetail>(['board', id])
+      if (!previous?.tasks?.length) return { previous }
+      const byId = new Map(previous.tasks.map((t) => [t.id, t]))
+      const nextTasks = mergedIds
+        .map((tid, i) => {
+          const t = byId.get(tid)
+          return t ? { ...t, position: i } : null
+        })
+        .filter((t): t is Task => t != null)
+      queryClient.setQueryData(['board', id], { ...previous, tasks: nextTasks })
+      return { previous }
+    },
+    onError: (err: Error, _mergedIds, ctx) => {
+      if (ctx?.previous != null) {
+        queryClient.setQueryData(['board', id], ctx.previous)
+      }
+      Alert.alert('Order not saved', err.message)
+    },
+    onSettled: () => invalidateBoard(),
   })
 
   const reorderSubtasksMutation = useMutation({
     mutationFn: ({ taskId, orderedIds }: { taskId: string; orderedIds: string[] }) =>
       updateSubtaskPositions(taskId, orderedIds),
-    onSuccess: invalidateBoard,
-    onError: (err: Error) => Alert.alert('Steps order not saved', err.message),
+    onMutate: async ({ taskId, orderedIds }) => {
+      await queryClient.cancelQueries({ queryKey: ['board', id] })
+      const previous = queryClient.getQueryData<BoardDetail>(['board', id])
+      const task = previous?.tasks.find((t) => t.id === taskId)
+      if (!previous?.tasks?.length || !task?.subtasks?.length) return { previous }
+      const bySubId = new Map(task.subtasks.map((s) => [s.id, s]))
+      const nextSubs = orderedIds
+        .map((sid, i) => {
+          const s = bySubId.get(sid)
+          return s ? { ...s, position: i } : null
+        })
+        .filter((s): s is Subtask => s != null)
+      const nextTasks = previous.tasks.map((t) =>
+        t.id === taskId ? { ...t, subtasks: nextSubs } : t,
+      )
+      queryClient.setQueryData(['board', id], { ...previous, tasks: nextTasks })
+      return { previous }
+    },
+    onError: (err: Error, _vars, ctx) => {
+      if (ctx?.previous != null) {
+        queryClient.setQueryData(['board', id], ctx.previous)
+      }
+      Alert.alert('Steps order not saved', err.message)
+    },
+    onSettled: () => invalidateBoard(),
   })
 
   const completeMutation = useMutation({
@@ -302,9 +343,10 @@ export default function BoardScreen() {
 
       const progress = subTotal > 0 ? subDone / subTotal : 0
       const card = (
+        <View className="mb-3.5">
         <Pressable
           onPress={() => openDetail(item)}
-          className="mb-3.5 rounded-[18px] border border-mate-border border-l-[4px] bg-mate-surface p-4 shadow-sm"
+          className="rounded-[18px] border border-mate-border border-l-[4px] bg-mate-surface p-4 shadow-sm"
           style={{
             opacity: opts.isActive ? 0.92 : 1,
             borderColor: done ? playful.successSoft : playful.border,
@@ -377,6 +419,7 @@ export default function BoardScreen() {
             <ChevronRight size={18} color={playful.textMuted} style={{ opacity: 0.65 }} />
           </View>
         </Pressable>
+        </View>
       )
 
       return card
@@ -569,7 +612,7 @@ export default function BoardScreen() {
       <Modal visible={addTaskOpen} transparent animationType="slide" onRequestClose={() => setAddTaskOpen(false)}>
         <View className="flex-1">
           <Pressable className="absolute inset-0 bg-mate-overlay" onPress={() => setAddTaskOpen(false)} />
-          <KeyboardAvoidingView className="flex-1 justify-end" behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <KeyboardAvoidingView className="flex-1 justify-end" behavior="padding">
           <View className="max-h-[92%] overflow-hidden rounded-t-[28px] bg-mate-surface">
             <View className="items-center pt-3 pb-1">
               <View className="h-1 w-10 rounded-full bg-mate-border" />
@@ -748,7 +791,7 @@ export default function BoardScreen() {
       <Modal visible={!!shownTask} transparent animationType="slide" onRequestClose={() => setDetailTask(null)}>
         <View className="flex-1">
           <Pressable className="absolute inset-0 bg-mate-overlay" onPress={() => setDetailTask(null)} />
-          <KeyboardAvoidingView className="flex-1 justify-end" behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <KeyboardAvoidingView className="flex-1 justify-end" behavior="padding">
           {shownTask && (
             <View className="max-h-[88%] flex-1 rounded-t-[28px] bg-mate-surface px-[22px] pb-9 pt-0">
               <DraggableFlatList

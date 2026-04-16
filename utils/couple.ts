@@ -1,5 +1,5 @@
-import * as Crypto from 'expo-crypto'
-import { supabase } from '@/utils/supabase'
+import { supabase } from '@/utils/supabase';
+import * as Crypto from 'expo-crypto';
 
 type CouplePartnerFields = { created_by: string; partner_id: string | null } | null | undefined
 
